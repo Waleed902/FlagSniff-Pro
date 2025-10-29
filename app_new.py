@@ -1051,6 +1051,15 @@ def render_analyzer_page():
                 help="A text file with lines like 'CLIENT_RANDOM <random> <secret>'."
             )
 
+        # YARA Rules
+        st.markdown("### 룰 YARA Rules (Optional)")
+        yara_rules_upload = st.file_uploader(
+            "Upload YARA rule files",
+            type=['yar', 'yara'],
+            accept_multiple_files=True,
+            help="Upload .yar or .yara files for custom signature matching."
+        )
+
         # Optional: AI-assisted TShark pre-analysis
         st.markdown("### 🦈 AI-Assisted TShark Pre-Analysis (Optional)")
         # Persist toggle in session state
@@ -1129,6 +1138,13 @@ def render_analyzer_page():
                         'category': challenge_category
                     }
                     
+                    yara_rule_paths = []
+                    if yara_rules_upload:
+                        for rule_file in yara_rules_upload:
+                            with tempfile.NamedTemporaryFile(delete=False, suffix='.yar') as tmp_rule_file:
+                                tmp_rule_file.write(rule_file.getvalue())
+                                yara_rule_paths.append(tmp_rule_file.name)
+
                     run_analysis(uploaded_file, {
                         'flags': search_flags,
                         'credentials': search_creds,
@@ -1137,7 +1153,7 @@ def render_analyzer_page():
                         'hashes': search_hashes,
                         'ctf_mode': ctf_mode,
                         'tshark_ai': use_tshark_ai
-                    }, custom_regex, ai_mode, ai_enabled, confidence_threshold, ctf_context, user_decrypt_key, tls_keylog_upload, display_filter)
+                    }, custom_regex, ai_mode, ai_enabled, confidence_threshold, ctf_context, user_decrypt_key, tls_keylog_upload, display_filter, yara_rule_paths)
                 else:
                     st.error("Cannot run analysis - Import error detected")
     
@@ -1377,7 +1393,7 @@ def render_results_page():
         st.markdown("---")
         tab_labels = [
             "🔍 Findings", "🔄 Streams", "🗣️ Sessions", "🧩 Protocols", "🤖 AI", "📈 Visuals",
-            "🕒 Timeline", "🗂️ Files", "🔁 Replay", "🛡️ Crypto", "🎯 CTF Analysis", "🗄️ Database", "🦠 Malware", "📥 Export"
+            "🕒 Timeline", "🗂️ Files", "🔁 Replay", "🛡️ Crypto", "🎯 CTF Analysis", "🗄️ Database", "🦠 Malware", "🛡️ YARA", "📥 Export"
         ]
         tabs = st.tabs(tab_labels)
         
@@ -1964,6 +1980,17 @@ def render_results_page():
             else:
                 st.info("Protocol hierarchy data not available.")
 
+            # TLS/SSL Certificates
+            st.markdown("---")
+            st.markdown("### 📜 TLS/SSL Certificates")
+            tls_certificates = results.get('tls_certificates')
+            if tls_certificates:
+                for i, cert in enumerate(tls_certificates):
+                    with st.expander(f"Certificate #{i+1}: {cert['subject']}"):
+                        st.json(cert)
+            else:
+                st.info("No TLS certificates found in the capture.")
+
             # Advanced analyzers summary
             adv = results.get('advanced') or {}
             if adv:
@@ -2510,10 +2537,23 @@ def render_results_page():
             db_analysis = results.get('database_analysis')
             if db_analysis:
                 for db_name, db_results in db_analysis.items():
-                    if db_results['total_' + db_name + '_packets'] > 0:
-                        st.subheader(f"{db_name.capitalize()} Traffic")
-                        st.write(f"Total Packets: {db_results['total_' + db_name + '_packets']}")
-                        # Add more details here as the analyzers are fleshed out
+                    if db_results.get('total_' + db_name + '_packets', 0) > 0:
+                        with st.expander(f"{db_name.capitalize()} Traffic ({db_results['total_' + db_name + '_packets']} packets)"):
+                            if 'command_distribution' in db_results:
+                                st.write("**Command Distribution:**")
+                                st.json(db_results['command_distribution'])
+                            if 'detected_queries' in db_results and db_results['detected_queries']:
+                                st.write("**Detected Queries:**")
+                                for query in db_results['detected_queries']:
+                                    st.code(query, language='sql')
+                            if 'detected_commands' in db_results and db_results['detected_commands']:
+                                st.write("**Detected Commands:**")
+                                for cmd in db_results['detected_commands']:
+                                    st.code(str(cmd))
+                            if 'responses' in db_results and db_results['responses']:
+                                st.write("**Responses:**")
+                                for resp in db_results['responses']:
+                                    st.write(resp)
             else:
                 st.info("No database traffic detected.")
 
@@ -2535,8 +2575,21 @@ def render_results_page():
             else:
                 st.info("No malware indicators detected.")
 
-        # Export Tab
+        # YARA Scan Tab
         with tabs[13]:
+            st.markdown("### 🛡️ YARA Scan Results")
+            yara_matches = results.get('yara_matches')
+            if yara_matches:
+                for match in yara_matches:
+                    with st.expander(f"Rule: {match['rule']}"):
+                        st.write(f"**Tags:** {', '.join(match['tags'])}")
+                        st.write("**Strings:**")
+                        st.json(match['strings'])
+            else:
+                st.info("No YARA matches found.")
+
+        # Export Tab
+        with tabs[14]:
             st.markdown("### 📥 Export Results")
             col1, col2, col3 = st.columns(3)
             with col1:
@@ -2758,7 +2811,7 @@ def render_about_page():
     
     st.markdown('</div>', unsafe_allow_html=True)
 
-def run_analysis(uploaded_file, search_options, custom_regex, ai_mode, ai_enabled, confidence_threshold, ctf_context=None, user_decrypt_key=None, tls_keylog_upload=None, display_filter=None):
+def run_analysis(uploaded_file, search_options, custom_regex, ai_mode, ai_enabled, confidence_threshold, ctf_context=None, user_decrypt_key=None, tls_keylog_upload=None, display_filter=None, yara_rules=None):
     """Run the analysis with progress tracking"""
     if not IMPORTS_OK:
         st.error("Analysis unavailable - Import error detected")
@@ -2808,7 +2861,7 @@ def run_analysis(uploaded_file, search_options, custom_regex, ai_mode, ai_enable
         st.text("📊 Analyzing PCAP Structure...")
         
         # Perform analysis
-        results = analyzer.analyze_file(tmp_file_path, search_options, custom_regex, user_decrypt_key=user_decrypt_key, tls_keylog_file=tls_keylog_path, display_filter=display_filter)
+        results = analyzer.analyze_file(tmp_file_path, search_options, custom_regex, user_decrypt_key=user_decrypt_key, tls_keylog_file=tls_keylog_path, display_filter=display_filter, yara_rules=yara_rules)
         # Track source for grounded summaries and re-analysis
         results['source_pcap'] = tmp_file_path
         

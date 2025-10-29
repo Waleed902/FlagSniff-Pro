@@ -49,6 +49,8 @@ from analyzers.protocols.database.mongodb import analyze_mongodb_traffic
 from analyzers.protocols.database.mssql import analyze_mssql_traffic
 from analyzers.malware.signature_matcher import detect_malware_signatures
 from analyzers.malware.c2_detector import detect_c2_communication
+from analyzers.protocols.tls.certificate_analyzer import analyze_tls_certificates
+from utils.yara_scanner import scan_with_yara
 
 class WebPcapAnalyzer:
     """Enhanced PCAP analyzer optimized for web interface"""
@@ -157,7 +159,7 @@ class WebPcapAnalyzer:
 
     def analyze_file(self, file_path: str, search_options: Dict[str, bool], 
                     custom_regex: Optional[str] = None, progress_callback=None, user_decrypt_key: str = None,
-                     tls_keylog_file: Optional[str] = None, display_filter: Optional[str] = None) -> Dict[str, Any]:
+                     tls_keylog_file: Optional[str] = None, display_filter: Optional[str] = None, yara_rules: Optional[List[str]] = None) -> Dict[str, Any]:
         """
         Analyze PCAP file with given search options
         
@@ -168,6 +170,7 @@ class WebPcapAnalyzer:
             progress_callback: Optional callback for progress updates
             user_decrypt_key: Optional key for decryption attempts
             display_filter: Optional display filter expression
+            yara_rules: Optional list of paths to YARA rule files
         
         Returns:
             Analysis results dictionary
@@ -248,6 +251,9 @@ class WebPcapAnalyzer:
 
             # Generate IO graph data
             self.results['io_graph_data'] = generate_io_graph_data(packets)
+
+            # Analyze TLS certificates
+            self.results['tls_certificates'] = analyze_tls_certificates(packets)
 
             # Determine search types
             search_types = []
@@ -1292,6 +1298,20 @@ class WebPcapAnalyzer:
             except Exception:
                 pass
             
+            # YARA Scan
+            if yara_rules:
+                self.results['yara_matches'] = []
+                for packet in packets:
+                    if packet.haslayer(Raw):
+                        matches = scan_with_yara(packet[Raw].load, yara_rules)
+                        if matches:
+                            self.results['yara_matches'].extend(matches)
+                if 'extracted_files' in self.results:
+                    for file_info in self.results['extracted_files']:
+                        matches = scan_with_yara(file_info['data'], yara_rules)
+                        if matches:
+                            self.results['yara_matches'].extend(matches)
+
             # Auto-generate a lightweight HTML and Markdown report
             try:
                 reporter = AutomatedReporting(logger=self.logger)

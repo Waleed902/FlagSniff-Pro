@@ -2,28 +2,66 @@
 
 from scapy.all import *
 
-def parse_resp(payload):
-    """
-    A very basic RESP parser for Redis commands.
-    """
-    commands = []
-    lines = payload.split(b'\r\n')
+class RespParser:
+    def __init__(self, payload):
+        self.payload = payload
+        self.index = 0
 
-    i = 0
-    while i < len(lines):
-        line = lines[i]
-        if line.startswith(b'*'):
-            # Array of bulk strings
-            num_args = int(line[1:])
-            for _ in range(num_args):
-                i += 1
-                if i < len(lines) and lines[i].startswith(b'$'):
-                    i += 1
-                    if i < len(lines):
-                        commands.append(lines[i].decode('utf-8', 'ignore'))
-        i += 1
+    def parse(self):
+        if not self.payload:
+            return None
+        return self._parse_value()
 
-    return commands
+    def _parse_value(self):
+        if self.index >= len(self.payload):
+            return None
+
+        data_type = chr(self.payload[self.index])
+        self.index += 1
+
+        if data_type == '+': # Simple String
+            return self._parse_simple_string()
+        elif data_type == '-': # Error
+            return self._parse_error()
+        elif data_type == ':': # Integer
+            return self._parse_integer()
+        elif data_type == '$': # Bulk String
+            return self._parse_bulk_string()
+        elif data_type == '*': # Array
+            return self._parse_array()
+        else:
+            return None
+
+    def _read_line(self):
+        end_index = self.payload.find(b'\r\n', self.index)
+        if end_index == -1:
+            return None
+        line = self.payload[self.index:end_index]
+        self.index = end_index + 2
+        return line
+
+    def _parse_simple_string(self):
+        return self._read_line().decode('utf-8', 'ignore')
+
+    def _parse_error(self):
+        return f"Error: {self._read_line().decode('utf-8', 'ignore')}"
+
+    def _parse_integer(self):
+        return int(self._read_line())
+
+    def _parse_bulk_string(self):
+        length = int(self._read_line())
+        if length == -1:
+            return None
+        data = self.payload[self.index:self.index + length]
+        self.index += length + 2 # +2 for \r\n
+        return data.decode('utf-8', 'ignore')
+
+    def _parse_array(self):
+        num_elements = int(self._read_line())
+        if num_elements == -1:
+            return None
+        return [self._parse_value() for _ in range(num_elements)]
 
 def analyze_redis_traffic(packets):
     """
@@ -39,7 +77,9 @@ def analyze_redis_traffic(packets):
             results['total_redis_packets'] += 1
 
             payload = packet[Raw].load
-            commands = parse_resp(payload)
-            results['detected_commands'].extend(commands)
+            parser = RespParser(payload)
+            command = parser.parse()
+            if command:
+                results['detected_commands'].append(command)
 
     return results
