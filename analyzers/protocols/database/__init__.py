@@ -1,15 +1,15 @@
-"""
-Database Protocol Analyzers
-MySQL, PostgreSQL, MongoDB, Redis, MSSQL
-"""
+# analyzers/protocols/database/__init__.py
 
-from .mysql_analyzer import MySQLAnalyzer, analyze_mysql_traffic
-from .postgres_analyzer import PostgresAnalyzer, analyze_postgres_traffic
-from .mongodb_analyzer import MongoDBAnalyzer, analyze_mongodb_traffic
-from .redis_analyzer import RedisAnalyzer, analyze_redis_traffic
-from .mssql_analyzer import MSSQLAnalyzer, analyze_mssql_traffic
+from . import mysql
+from . import redis
+from . import postgresql
+from . import mongodb
+from . import mssql
 
 __all__ = [
-    'MySQLAnalyzer','PostgresAnalyzer','MongoDBAnalyzer','RedisAnalyzer','MSSQLAnalyzer',
-    'analyze_mysql_traffic','analyze_postgres_traffic','analyze_mongodb_traffic','analyze_redis_traffic','analyze_mssql_traffic'
+    'mysql',
+    'redis',
+    'postgresql',
+    'mongodb',
+    'mssql'
 ]

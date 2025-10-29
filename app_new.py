@@ -927,6 +927,13 @@ def render_analyzer_page():
         help="Upload .pcap or .pcapng files for analysis"
     )
     
+    st.markdown("### 🔍 Display Filter")
+    display_filter = st.text_input(
+        "Enter a display filter (e.g., 'ip.addr == 1.2.3.4')",
+        placeholder="ip.addr == 1.2.3.4",
+        help="Use Wireshark-like syntax to filter packets before analysis."
+    )
+
     if uploaded_file:
         st.success(f"✅ File loaded: {uploaded_file.name} ({uploaded_file.size:,} bytes)")
         
@@ -1130,7 +1137,7 @@ def render_analyzer_page():
                         'hashes': search_hashes,
                         'ctf_mode': ctf_mode,
                         'tshark_ai': use_tshark_ai
-                    }, custom_regex, ai_mode, ai_enabled, confidence_threshold, ctf_context, user_decrypt_key, tls_keylog_upload)
+                    }, custom_regex, ai_mode, ai_enabled, confidence_threshold, ctf_context, user_decrypt_key, tls_keylog_upload, display_filter)
                 else:
                     st.error("Cannot run analysis - Import error detected")
     
@@ -1370,7 +1377,7 @@ def render_results_page():
         st.markdown("---")
         tab_labels = [
             "🔍 Findings", "🔄 Streams", "🗣️ Sessions", "🧩 Protocols", "🤖 AI", "📈 Visuals",
-            "🕒 Timeline", "🗂️ Files", "🔁 Replay", "🛡️ Crypto", "🎯 CTF Analysis", "📥 Export"
+            "🕒 Timeline", "🗂️ Files", "🔁 Replay", "🛡️ Crypto", "🎯 CTF Analysis", "🗄️ Database", "🦠 Malware", "📥 Export"
         ]
         tabs = st.tabs(tab_labels)
         
@@ -1569,6 +1576,15 @@ def render_results_page():
                         </div>
                     </div>
                     """, unsafe_allow_html=True)
+
+                    if finding.get('stream_id'):
+                        def follow_stream_callback(stream_id):
+                            st.session_state.followed_stream = stream_id
+                            st.session_state.current_page = 'results' # Ensure we are on the results page
+                            st.rerun()
+
+                        st.button("Follow Stream", key=f"follow_stream_{i}", on_click=follow_stream_callback, args=(finding['stream_id'],))
+
                     if finding.get('protocol') == 'HTTP':
                         with st.expander(f"HTTP Details for Finding #{i+1}"):
                             if finding.get('http_headers'):
@@ -1684,6 +1700,12 @@ def render_results_page():
                 except Exception:
                     pass
 
+        # If a stream is being followed, switch to the streams tab
+        if 'followed_stream' in st.session_state and st.session_state.followed_stream:
+            default_tab_index = 1
+        else:
+            default_tab_index = 0
+
         # Streams Tab
         with tabs[1]:
             st.markdown("### 🔄 Reconstructed Streams")
@@ -1725,7 +1747,9 @@ def render_results_page():
                         preview = ''.join(chr(x) if 32 <= x < 127 else '.' for x in data_bytes[:2000])
                     else:  # Auto
                         preview = ''.join(chr(x) if 32 <= x < 127 else '.' for x in data_bytes[:2000]) if ratio < 0.4 else (data if isinstance(data, str) else data_bytes[:2000].decode('utf-8', errors='ignore'))
-                    with st.expander(f"Stream {stream_id}"):
+
+                    expanded = st.session_state.get('followed_stream') == stream_id
+                    with st.expander(f"Stream {stream_id}", expanded=expanded):
                         st.markdown(f"**Source:** {stream.get('src_ip', 'N/A')} → {stream.get('dst_ip', 'N/A')}")
                         st.markdown(f"**Protocol:** {stream.get('protocol', 'TCP')}")
                         st.code(preview, language="text")
@@ -1783,6 +1807,9 @@ def render_results_page():
                         st.info("All streams are hidden by current filters. Try adjusting the 'Hide binary/TLS-like streams' option.")
                     else:
                         st.info("No streams were reconstructed from the traffic.")
+
+                if 'followed_stream' in st.session_state:
+                    del st.session_state['followed_stream']
             else:
                 st.info("No TCP streams found in the capture. This may indicate UDP-only traffic or analysis issues.")
 
@@ -1919,6 +1946,23 @@ def render_results_page():
                         st.write(f"- {proto}: {count}")
                 else:
                     st.warning("No protocol details available. Ensure analysis completed and protocol-specific parsing is enabled.")
+
+            # Protocol Hierarchy
+            st.markdown("---")
+            st.markdown("### 🌳 Protocol Hierarchy")
+            protocol_hierarchy = results.get('protocol_hierarchy')
+            if protocol_hierarchy:
+                def render_hierarchy(node, level=0):
+                    if 'children' in node and node['children']:
+                        with st.expander(f"{'  ' * level}{node['name']} ({node['value']} packets)"):
+                            for child in node['children']:
+                                render_hierarchy(child, level + 1)
+                    else:
+                        st.markdown(f"{'  ' * level}- {node['name']} ({node['value']} packets)")
+
+                render_hierarchy(protocol_hierarchy)
+            else:
+                st.info("Protocol hierarchy data not available.")
 
             # Advanced analyzers summary
             adv = results.get('advanced') or {}
@@ -2133,17 +2177,35 @@ def render_results_page():
                 try:
                     st.markdown("#### Findings Distribution")
                     fig = st.session_state.ctf_visualizer.create_findings_distribution(results['findings'])
-                    st.plotly_chart(fig, width='stretch')
+                    st.plotly_chart(fig, use_container_width=True)
                 except Exception:
                     pass
                 try:
                     st.markdown("#### Confidence Heatmap")
                     fig2 = st.session_state.ctf_visualizer.create_confidence_heatmap(results['findings'])
-                    st.plotly_chart(fig2, width='stretch')
+                    st.plotly_chart(fig2, use_container_width=True)
                 except Exception:
                     pass
             else:
                 st.info("No visualization data available yet. Run analysis to populate findings.")
+
+            # IO Graphs
+            st.markdown("---")
+            st.markdown("### 📈 IO Graphs")
+            io_graph_data = results.get('io_graph_data')
+            if io_graph_data:
+                pps_df = pd.DataFrame(io_graph_data['packets_per_second'])
+                bps_df = pd.DataFrame(io_graph_data['bytes_per_second'])
+
+                if not pps_df.empty:
+                    pps_fig = px.line(pps_df, x='time', y='packets', title='Packets per Second')
+                    st.plotly_chart(pps_fig, use_container_width=True)
+
+                if not bps_df.empty:
+                    bps_fig = px.line(bps_df, x='time', y='bytes', title='Bytes per Second')
+                    st.plotly_chart(bps_fig, use_container_width=True)
+            else:
+                st.info("IO graph data not available.")
 
         # Timeline Tab
         with tabs[6]:
@@ -2442,8 +2504,39 @@ def render_results_page():
             if not shown:
                 st.info("No crypto/decoding artifacts found. Try running analysis with encoded data or enable decryption options.")
 
-        # Export Tab
+        # Database Tab
         with tabs[11]:
+            st.markdown("### 🗄️ Database Analysis")
+            db_analysis = results.get('database_analysis')
+            if db_analysis:
+                for db_name, db_results in db_analysis.items():
+                    if db_results['total_' + db_name + '_packets'] > 0:
+                        st.subheader(f"{db_name.capitalize()} Traffic")
+                        st.write(f"Total Packets: {db_results['total_' + db_name + '_packets']}")
+                        # Add more details here as the analyzers are fleshed out
+            else:
+                st.info("No database traffic detected.")
+
+        # Malware Tab
+        with tabs[12]:
+            st.markdown("### 🦠 Malware Analysis")
+            malware_analysis = results.get('malware_analysis')
+            if malware_analysis:
+                if malware_analysis['signatures']['detected_signatures']:
+                    st.subheader("Detected Signatures")
+                    for sig in malware_analysis['signatures']['detected_signatures']:
+                        st.write(f"- Type: {sig['type']}, Signature: {sig['signature']}")
+                        st.code(sig['packet_summary'])
+                if malware_analysis['c2']['detected_c2_patterns']:
+                    st.subheader("Detected C2 Patterns")
+                    for pattern in malware_analysis['c2']['detected_c2_patterns']:
+                        st.write(f"- Type: {pattern['type']}, Source: {pattern['source_ip']}, Destination: {pattern['destination_ip']}")
+                        st.write(f"  Packet Count: {pattern['packet_count']}, Average Interval: {pattern['average_interval']:.2f}s")
+            else:
+                st.info("No malware indicators detected.")
+
+        # Export Tab
+        with tabs[13]:
             st.markdown("### 📥 Export Results")
             col1, col2, col3 = st.columns(3)
             with col1:
@@ -2665,7 +2758,7 @@ def render_about_page():
     
     st.markdown('</div>', unsafe_allow_html=True)
 
-def run_analysis(uploaded_file, search_options, custom_regex, ai_mode, ai_enabled, confidence_threshold, ctf_context=None, user_decrypt_key=None, tls_keylog_upload=None):
+def run_analysis(uploaded_file, search_options, custom_regex, ai_mode, ai_enabled, confidence_threshold, ctf_context=None, user_decrypt_key=None, tls_keylog_upload=None, display_filter=None):
     """Run the analysis with progress tracking"""
     if not IMPORTS_OK:
         st.error("Analysis unavailable - Import error detected")
@@ -2715,7 +2808,7 @@ def run_analysis(uploaded_file, search_options, custom_regex, ai_mode, ai_enable
         st.text("📊 Analyzing PCAP Structure...")
         
         # Perform analysis
-        results = analyzer.analyze_file(tmp_file_path, search_options, custom_regex, user_decrypt_key=user_decrypt_key, tls_keylog_file=tls_keylog_path)
+        results = analyzer.analyze_file(tmp_file_path, search_options, custom_regex, user_decrypt_key=user_decrypt_key, tls_keylog_file=tls_keylog_path, display_filter=display_filter)
         # Track source for grounded summaries and re-analysis
         results['source_pcap'] = tmp_file_path
         

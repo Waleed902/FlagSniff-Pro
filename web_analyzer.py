@@ -38,7 +38,17 @@ from analyzers.forensics import identify_suspicious_packets
 from analyzers.ctf.ctf_automated_reporting import AutomatedReporting
 from utils.iocs import extract_from_results as extract_iocs_from_results, export_iocs as export_iocs_to_files
 
+from utils.io_graphs import generate_io_graph_data
+from utils.protocol_hierarchy import get_protocol_hierarchy
+from utils.filters import apply_display_filter
 from detectors.tracking_pixels import extract_pixels, reconstruct_sequences, reconstruct_sequences_relaxed
+from analyzers.protocols.database.mysql import analyze_mysql_traffic
+from analyzers.protocols.database.redis import analyze_redis_traffic
+from analyzers.protocols.database.postgresql import analyze_postgresql_traffic
+from analyzers.protocols.database.mongodb import analyze_mongodb_traffic
+from analyzers.protocols.database.mssql import analyze_mssql_traffic
+from analyzers.malware.signature_matcher import detect_malware_signatures
+from analyzers.malware.c2_detector import detect_c2_communication
 
 class WebPcapAnalyzer:
     """Enhanced PCAP analyzer optimized for web interface"""
@@ -126,9 +136,28 @@ class WebPcapAnalyzer:
                 pass
         return attempts
     
+    def analyze_database_traffic(self, packets):
+        """Analyzes all supported database protocols."""
+        db_results = {
+            'mysql': analyze_mysql_traffic(packets),
+            'redis': analyze_redis_traffic(packets),
+            'postgresql': analyze_postgresql_traffic(packets),
+            'mongodb': analyze_mongodb_traffic(packets),
+            'mssql': analyze_mssql_traffic(packets),
+        }
+        return db_results
+
+    def analyze_malware_traffic(self, packets):
+        """Analyzes network traffic for malware indicators."""
+        malware_results = {
+            'signatures': detect_malware_signatures(packets),
+            'c2': detect_c2_communication(packets),
+        }
+        return malware_results
+
     def analyze_file(self, file_path: str, search_options: Dict[str, bool], 
                     custom_regex: Optional[str] = None, progress_callback=None, user_decrypt_key: str = None,
-                    tls_keylog_file: Optional[str] = None) -> Dict[str, Any]:
+                     tls_keylog_file: Optional[str] = None, display_filter: Optional[str] = None) -> Dict[str, Any]:
         """
         Analyze PCAP file with given search options
         
@@ -138,6 +167,7 @@ class WebPcapAnalyzer:
             custom_regex: Optional custom regex pattern
             progress_callback: Optional callback for progress updates
             user_decrypt_key: Optional key for decryption attempts
+            display_filter: Optional display filter expression
         
         Returns:
             Analysis results dictionary
@@ -197,11 +227,28 @@ class WebPcapAnalyzer:
             if progress_callback:
                 progress_callback("Reading PCAP file...")
             
-            packets = rdpcap(file_path)
-            self.results['total_packets'] = len(packets)
+            all_packets = rdpcap(file_path)
+            self.results['total_packets'] = len(all_packets)
+
+            # Apply display filter
+            packets = apply_display_filter(all_packets, display_filter)
+            self.results['filtered_packets'] = len(packets)
+
+            # Analyze database traffic
+            self.results['database_analysis'] = self.analyze_database_traffic(packets)
+
+            # Analyze malware traffic
+            self.results['malware_analysis'] = self.analyze_malware_traffic(packets)
+
             # Reconstruct TCP streams
             self.results['reconstructed_streams'] = reconstruct_tcp_streams(packets)
             
+            # Generate protocol hierarchy
+            self.results['protocol_hierarchy'] = get_protocol_hierarchy(packets)
+
+            # Generate IO graph data
+            self.results['io_graph_data'] = generate_io_graph_data(packets)
+
             # Determine search types
             search_types = []
             if search_options.get('flags', False):
