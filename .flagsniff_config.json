@@ -1,0 +1,25 @@
+{
+  "longcat_api_key": "ak_1EE5gZ7l56tN1Fo7gP5Gn01f7XS6s",
+  "model": "LongCat-Flash-Chat",
+  "setup_date": "2025-10-26T00:27:45.556610",
+  "api_endpoint": "https://api.longcat.chat/openai/v1/chat/completions",
+  "ai": {
+    "enabled": true,
+    "provider": "longcat",
+    "temperature": 0.7,
+    "max_tokens": 4048,
+    "confidence_threshold": 50,
+    "strict_mode": false
+  },
+  "patterns": {
+    "flag_formats": [
+      "flag{...}",
+      "CTF{...}",
+      "HTB{...}",
+      "DUCTF{...}",
+      "picoCTF{...}",
+      "FLAG{...}",
+      "PCTF{...}"
+    ]
+  }
+}

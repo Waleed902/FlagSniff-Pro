@@ -1,0 +1,24 @@
+# Core dependencies
+rich>=13.0.0
+scapy>=2.5.0
+streamlit>=1.28.0
+pandas>=1.5.0
+plotly>=5.15.0
+numpy>=1.24.0
+python-dateutil>=2.8.0
+requests>=2.31.0
+websockets>=11.0.0
+
+# Additional dependencies for enhanced UI
+streamlit-option-menu>=0.3.6
+streamlit-extras>=0.3.0
+
+# PDF Generation
+reportlab>=3.6.0
+fpdf2>=2.5.0
+
+# CTF Analysis dependencies
+networkx>=3.0
+matplotlib>=3.5.0
+beautifulsoup4>=4.12.3
+pycryptodome>=3.20.0
